@@ -12,12 +12,16 @@ const bip39 = require('bip39');
 const { derivePath } = require('ed25519-hd-key');
 const bs58 = require('bs58');
 require('dotenv').config();
+const axios = require('axios');
 
 const DEVNET_URL = 'https://devnet.sonic.game/';
 const connection = new Connection(DEVNET_URL, 'confirmed');
 const keypairs = [];
 
-async function sendSol(fromKeypair, toPublicKey, amount) {
+// Proxy list for each account
+const proxies = ['proxy1.example.com:8000', 'proxy2.example.com:8000', 'proxy3.example.com:8000'];
+
+async function sendSol(fromKeypair, toPublicKey, amount, proxy) {
   const transaction = new Transaction().add(
     SystemProgram.transfer({
       fromPubkey: fromKeypair.publicKey,
@@ -26,9 +30,25 @@ async function sendSol(fromKeypair, toPublicKey, amount) {
     })
   );
 
-  const signature = await sendAndConfirmTransaction(connection, transaction, [fromKeypair]);
-
-  return signature;
+  try {
+    // Send transaction using axios with proxy agent
+    const signature = await sendAndConfirmTransaction(connection, transaction, [fromKeypair], {
+      commitment: 'confirmed',
+      preflightCommitment: 'confirmed',
+      skipPreflight: false,
+      preflightCommitment: 'max',
+      commitment: 'max',
+      preflightCommitment: 'confirmed',
+      agent: {
+        http: new require('http').Agent({ proxy: `http://${proxy}` }),
+        https: new require('https').Agent({ proxy: `http://${proxy}` })
+      }
+    });
+    return signature;
+  } catch (error) {
+    console.error('Failed to send SOL:', error);
+    return null;
+  }
 }
 
 function generateRandomAddresses(count) {
@@ -135,7 +155,11 @@ async function main() {
             try {
               const randomAmount = Math.random() * 0.0005 + 0.001; // Generate random amount between 0.001 and 0.0015 SOL
               const amountInLamports = Math.round(randomAmount * LAMPORTS_PER_SOL); // Convert to lamports and round to nearest integer
-              await sendSol(keypair, toPublicKey, amountInLamports);
+
+              // Pilih proxy berdasarkan indeks akun ke dalam array proxies
+              const proxy = proxies[currentKeypairIndex % proxies.length];
+
+              await sendSol(keypair, toPublicKey, amountInLamports, proxy);
               successCount++;
               process.stdout.clearLine();
               process.stdout.cursorTo(0);
@@ -172,34 +196,24 @@ async function countdownTimer(seconds, isCycleCountdown) {
       const countdown = formatCountdown(i * 1000);
       process.stdout.write(`\x1b[33mSemua akun akan diproses ulang dalam: ${countdown}\x1b[0m`);
     } else {
-      if (i === 0) {
-        process.stdout.write(`Lanjut ke akun berikutnya...`);
-      } else {
-        process.stdout.write(`Melanjutkan ke akun berikutnya dalam \x1b[31m${i}\x1b[0m detik...`);
-      }
+      const countdown = formatCountdown(i * 1000);
+      process.stdout.write(`\x1b[33mPindah ke akun berikutnya dalam: ${countdown}\x1b[0m`);
     }
     await delay(1000);
   }
-  if (isCycleCountdown) {
-    console.log('\n');
-    main().catch((error) => {
-      console.error('Error:', error);
-      process.exit(1);
-    });
-  } else {
-    console.log('\n');
-  }
+  process.stdout.clearLine();
+  process.stdout.cursorTo(0);
 }
 
-function formatCountdown(milliseconds) {
-  const hours = Math.floor(milliseconds / (1000 * 60 * 60));
-  const minutes = Math.floor((milliseconds % (1000 * 60 * 60)) / (1000 * 60));
-  const seconds = Math.floor((milliseconds % (1000 * 60)) / 1000);
+function formatCountdown(ms) {
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
 
-  return `${hours}h ${minutes}m ${seconds}s`;
+  return `${hours.toString().padStart(2, '0')}:${(minutes % 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`;
 }
 
-main().catch((error) => {
-  console.error('Error:', error);
+main().catch((err) => {
+  console.error(err);
   process.exit(1);
 });
