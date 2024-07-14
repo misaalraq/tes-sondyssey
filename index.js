@@ -11,15 +11,36 @@ const {
 const bip39 = require('bip39');
 const { derivePath } = require('ed25519-hd-key');
 const bs58 = require('bs58');
-require('dotenv').config();
 const axios = require('axios');
+const { HttpsProxyAgent } = require('https-proxy-agent');
+require('dotenv').config();
 
 const DEVNET_URL = 'https://devnet.sonic.game/';
 const connection = new Connection(DEVNET_URL, 'confirmed');
 const keypairs = [];
 
-// Proxy list for each account
-const proxies = ['proxy1.example.com:8000', 'proxy2.example.com:8000', 'proxy3.example.com:8000'];
+async function fetchProxies() {
+  const proxyUrls = [
+    'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt',
+    'https://raw.githubusercontent.com/monosans/proxy-list/main/proxies_anonymous/http.txt',
+    'https://raw.githubusercontent.com/Vann-Dev/proxy-list/main/proxies/http.txt',
+    'https://raw.githubusercontent.com/elliottophellia/yakumo/master/results/http/global/http_checked.txt'
+  ];
+
+  const proxies = [];
+
+  for (const url of proxyUrls) {
+    try {
+      const response = await axios.get(url);
+      const proxyList = response.data.split('\n').filter(Boolean);
+      proxies.push(...proxyList);
+    } catch (error) {
+      console.error(`Failed to fetch proxies from ${url}:`, error);
+    }
+  }
+
+  return proxies;
+}
 
 async function sendSol(fromKeypair, toPublicKey, amount, proxy) {
   const transaction = new Transaction().add(
@@ -31,7 +52,7 @@ async function sendSol(fromKeypair, toPublicKey, amount, proxy) {
   );
 
   try {
-    // Send transaction using axios with proxy agent
+    const proxyAgent = new HttpsProxyAgent(`http://${proxy}`);
     const signature = await sendAndConfirmTransaction(connection, transaction, [fromKeypair], {
       commitment: 'confirmed',
       preflightCommitment: 'confirmed',
@@ -40,8 +61,8 @@ async function sendSol(fromKeypair, toPublicKey, amount, proxy) {
       commitment: 'max',
       preflightCommitment: 'confirmed',
       agent: {
-        http: new require('http').Agent({ proxy: `http://${proxy}` }),
-        https: new require('https').Agent({ proxy: `http://${proxy}` })
+        http: proxyAgent,
+        https: proxyAgent,
       }
     });
     return signature;
@@ -142,6 +163,11 @@ async function main() {
       const delayBetweenCycles = 24 * 60 * 60 * 1000; // 24 jam
       const delayBetweenTransactionsMs = delayBetweenTransactions; // delay antara transaksi dalam milidetik
 
+      const proxies = await fetchProxies();
+      if (proxies.length === 0) {
+        throw new Error('No proxies available');
+      }
+
       async function processTransactions() {
         for (let currentKeypairIndex = 0; currentKeypairIndex < keypairs.length; currentKeypairIndex++) {
           const keypair = keypairs[currentKeypairIndex];
@@ -156,8 +182,8 @@ async function main() {
               const randomAmount = Math.random() * 0.0005 + 0.001; // Generate random amount between 0.001 and 0.0015 SOL
               const amountInLamports = Math.round(randomAmount * LAMPORTS_PER_SOL); // Convert to lamports and round to nearest integer
 
-              // Pilih proxy berdasarkan indeks akun ke dalam array proxies
-              const proxy = proxies[currentKeypairIndex % proxies.length];
+              // Pilih proxy secara acak
+              const proxy = proxies[Math.floor(Math.random() * proxies.length)];
 
               await sendSol(keypair, toPublicKey, amountInLamports, proxy);
               successCount++;
